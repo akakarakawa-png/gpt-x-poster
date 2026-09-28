@@ -35,6 +35,7 @@ jobs:
           import os
           import re
           import sys
+          import traceback
           from pathlib import Path
           from twikit import Client
 
@@ -67,12 +68,13 @@ jobs:
               except (ValueError, TypeError):
                   report('SETUP REQUIRED: set X_COOKIES_JSON with auth_token and ct0. Nothing posted.')
                   return 1
-              if mode == 'validate':
-                  report('Configuration format valid. X authentication and publication are NOT tested.')
-                  return 0
               client = Client('ja', timeout=30)
               try:
                   client.set_cookies(cookies)
+                  if mode == 'validate':
+                      await client.user()
+                      report('X authentication verified. Nothing posted.')
+                      return 0
                   tweet = await client.create_tweet(text=text)
                   tweet_id = str(tweet.id)
                   if not re.fullmatch(r'[0-9]+', tweet_id):
@@ -81,6 +83,11 @@ jobs:
                   return 0
               except Exception as error:
                   name = type(error).__name__
+                  for frame in traceback.extract_tb(error.__traceback__):
+                      print(Path(frame.filename).name, frame.lineno, frame.name)
+                  known = ("Couldn't get KEY_BYTE indices", "invalid response", "Couldn't get key from the page source")
+                  if str(error) in known:
+                      print(str(error))
                   report('POST NOT CONFIRMED (' + name + '). Check X before retrying; no automatic retry was made.')
                   return 1
               finally:
