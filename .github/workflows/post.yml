@@ -23,7 +23,7 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Install pinned X client
-        run: python3 -m pip install --disable-pip-version-check --no-cache-dir twikit==2.3.3
+        run: python3 -m pip install --disable-pip-version-check --no-cache-dir twikit==2.3.3 xclienttransaction==1.0.3
       - name: Validate or publish exact text
         env:
           X_COOKIES_JSON: ${{ secrets.X_COOKIES_JSON }}
@@ -38,6 +38,21 @@ jobs:
           import traceback
           from pathlib import Path
           from twikit import Client
+          from twikit.x_client_transaction.transaction import ClientTransaction
+          from x_client_transaction.utils import get_ondemand_file_url
+          from x_client_transaction.constants import INDICES_REGEX
+
+          class CompatibleTransaction(ClientTransaction):
+              async def get_indices(self, home_page_response, session, headers):
+                  url = get_ondemand_file_url(home_page_response)
+                  if not url.startswith('https://abs.twimg.com/responsive-web/client-web/ondemand.s.'):
+                      raise ValueError('Unexpected asset host')
+                  response = await session.get(url, headers=headers)
+                  response.raise_for_status()
+                  indices = [int(m.group(2)) for m in INDICES_REGEX.finditer(response.text)]
+                  if len(indices) < 2:
+                      raise Exception("Couldn't get KEY_BYTE indices")
+                  return indices[0], indices[1:]
 
           def report(message):
               print(message)
@@ -69,6 +84,7 @@ jobs:
                   report('SETUP REQUIRED: set X_COOKIES_JSON with auth_token and ct0. Nothing posted.')
                   return 1
               client = Client('ja', timeout=30)
+              client.client_transaction = CompatibleTransaction()
               try:
                   client.set_cookies(cookies)
                   if mode == 'validate':
