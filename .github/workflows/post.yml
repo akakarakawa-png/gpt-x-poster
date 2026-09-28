@@ -1,0 +1,90 @@
+name: Post to X
+run-name: X post - ${{ github.run_id }}
+on:
+  workflow_dispatch:
+    inputs:
+      text:
+        description: 'Exact text to publish (unchanged)'
+        required: true
+        type: string
+      mode:
+        description: 'validate checks setup without posting; post publishes once'
+        required: true
+        default: validate
+        type: choice
+        options:
+          - validate
+          - post
+permissions: {}
+jobs:
+  post:
+    if: github.ref == 'refs/heads/main' && github.event.repository.private == false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Install pinned X client
+        run: python3 -m pip install --disable-pip-version-check --no-cache-dir twikit==2.3.3
+      - name: Validate or publish exact text
+        env:
+          X_COOKIES_JSON: ${{ secrets.X_COOKIES_JSON }}
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import asyncio
+          import json
+          import os
+          import re
+          import sys
+          from pathlib import Path
+          from twikit import Client
+
+          def report(message):
+              print(message)
+              with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as out:
+                  out.write(message + chr(10))
+
+          async def main():
+              event = json.loads(Path(os.environ['GITHUB_EVENT_PATH']).read_text())
+              inputs = event.get('inputs', {})
+              text = inputs.get('text')
+              mode = inputs.get('mode', 'validate')
+              if not isinstance(text, str) or not text.strip():
+                  report('FAILED: text must be a nonempty string. Nothing posted.')
+                  return 1
+              if mode not in ('validate', 'post'):
+                  report('FAILED: invalid mode. Nothing posted.')
+                  return 1
+              if os.environ.get('GITHUB_RUN_ATTEMPT') != '1' and mode == 'post':
+                  report('BLOCKED: reruns cannot publish; check X before a new dispatch.')
+                  return 1
+              try:
+                  cookies = json.loads(os.environ.get('X_COOKIES_JSON', ''))
+                  if not isinstance(cookies, dict):
+                      raise ValueError()
+                  for key in ('auth_token', 'ct0'):
+                      if not isinstance(cookies.get(key), str) or not cookies[key]:
+                          raise ValueError()
+              except (ValueError, TypeError):
+                  report('SETUP REQUIRED: set X_COOKIES_JSON with auth_token and ct0. Nothing posted.')
+                  return 1
+              if mode == 'validate':
+                  report('Configuration format valid. X authentication and publication are NOT tested.')
+                  return 0
+              client = Client('ja', timeout=30)
+              try:
+                  client.set_cookies(cookies)
+                  tweet = await client.create_tweet(text=text)
+                  tweet_id = str(tweet.id)
+                  if not re.fullmatch(r'[0-9]+', tweet_id):
+                      raise ValueError()
+                  report('X accepted the post: https://x.com/i/status/' + tweet_id)
+                  return 0
+              except Exception as error:
+                  name = type(error).__name__
+                  report('POST NOT CONFIRMED (' + name + '). Check X before retrying; no automatic retry was made.')
+                  return 1
+              finally:
+                  await client.http.aclose()
+
+          sys.exit(asyncio.run(main()))
+          PY
