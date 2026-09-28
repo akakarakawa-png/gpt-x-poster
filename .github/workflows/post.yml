@@ -87,12 +87,19 @@ jobs:
               client.client_transaction = CompatibleTransaction()
               try:
                   client.set_cookies(cookies)
+                  settings, _ = await client.v11.settings()
+                  if settings.get('screen_name', '').lower() != 'akakarakawa':
+                      raise ValueError('Unexpected X account')
                   if mode == 'validate':
-                      await client.user()
                       report('X authentication verified. Nothing posted.')
                       return 0
-                  tweet = await client.create_tweet(text=text)
-                  tweet_id = str(tweet.id)
+                  result, _ = await client.gql.create_tweet(
+                      False, text, [], None, None, None, None, False, None, None, None)
+                  if result.get('errors'):
+                      codes = [e.get('code') for e in result['errors']]
+                      print('X error codes:', [c for c in codes if isinstance(c, int)])
+                      raise ValueError('X rejected request')
+                  tweet_id = str(result['data']['create_tweet']['tweet_results']['result']['rest_id'])
                   if not re.fullmatch(r'[0-9]+', tweet_id):
                       raise ValueError()
                   report('X accepted the post: https://x.com/i/status/' + tweet_id)
