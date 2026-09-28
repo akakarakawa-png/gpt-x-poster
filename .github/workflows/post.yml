@@ -38,6 +38,7 @@ jobs:
           import traceback
           from pathlib import Path
           from twikit import Client
+          from twikit.errors import NotFound
           from twikit.x_client_transaction.transaction import ClientTransaction
           from x_client_transaction.utils import get_ondemand_file_url
           from x_client_transaction.constants import INDICES_REGEX
@@ -87,7 +88,14 @@ jobs:
               client.client_transaction = CompatibleTransaction()
               try:
                   client.set_cookies(cookies)
-                  settings, _ = await client.v11.settings()
+                  for attempt in range(3):
+                      try:
+                          settings, _ = await client.v11.settings()
+                          break
+                      except NotFound:
+                          if attempt == 2:
+                              raise
+                          await asyncio.sleep(2)
                   if settings.get('screen_name', '').lower() != 'akakarakawa':
                       raise ValueError('Unexpected X account')
                   if mode == 'validate':
